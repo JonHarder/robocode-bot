@@ -3,7 +3,6 @@ import robocode.*;
 import robocode.util.Utils;
 
 import java.awt.Color;
-import java.awt.geom.Point2D;
 
 // API help : https://robocode.sourceforge.io/docs/robocode/robocode/Robot.html
 
@@ -107,8 +106,17 @@ public class JonBot extends AdvancedRobot
      */
     public void onScannedRobot(ScannedRobotEvent e) {
 	    // Replace the next line with any behavior you would like
+        double myAbsoluteBearing = this.getHeadingRadians() + e.getBearingRadians();
+
+        if(e.getDistance() > 5) {
+            this.setTurnGunRightRadians(Utils.normalRelativeAngle(myAbsoluteBearing - getGunHeadingRadians() +
+                    (e.getVelocity() * Math.sin(e.getHeadingRadians() - myAbsoluteBearing) / 13.0)));
+        } else {
+            this.setTurnGunRightRadians(this.getAdjustedBearingToEnemy(e, this.getGunHeadingRadians()));
+        }
+
+
         this.setTurnRadarRightRadians(this.getAdjustedBearingToEnemy(e, this.getRadarHeadingRadians()));
-        this.setTurnGunRightRadians(this.getAdjustedBearingToEnemy(e, this.getGunHeadingRadians()));
 
         double updatedPlayerHeading = this.getAdjustedBearingToEnemy(e, this.getHeadingRadians());
         double collisionAvoidedHeading = this.adjustHeadingAvoidCollisions(updatedPlayerHeading);
