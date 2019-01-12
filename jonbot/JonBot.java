@@ -127,30 +127,41 @@ public class JonBot extends AdvancedRobot
      * Takes the most recent set of 7 datum of enemy behavior
      * and finds the closest set in history, returning the
      * index in history of the start of the pattern.
-     * @param offset The start of history to compare against
+     * @param offset The start of history to compare against, also the number of events to search for a pattern
      * @return int
      */
-    private int patternMatch(int offset) {
+    private Datum[] patternMatch(int offset) {
         double minDelta = Double.POSITIVE_INFINITY;
         int minDeltaIndex = 0;
 
-        int i, j;
-        Datum[] pattern = new Datum[offset];
-        // initialize pattern with the most recent bot behavior of the last OFFSET ticks
-        for(i=0; i<offset; i++) {
-            pattern[i] = JonBot.patternData.get(i);
+        // get a copy of the history in an array
+        // history is the list of recorded enemy data
+        // most recent first i.e. index 0 is the most recent
+        Datum[] history = new Datum[JonBot.patternData.size()];
+        for(int i=0; i<JonBot.patternData.size(); i++) {
+            history[i] = JonBot.patternData.get(i);
         }
 
-        // loop over ever past event to see the similarity to the pattern
-        for(i=offset; i<JonBot.patternData.size()-offset; i++) {
+        // get the OFFSET most recent items of history
+        // index 0 is the first item of the pattern,
+        // going forward in time the higher the index
+        // ex. [0 => first event chronologically, 1 => second event, ... offset => last event]
+        Datum[] pattern = new Datum[offset];
+        for(int i=offset-1, j=0; i>=0; i--, j++) {
+            pattern[j] = history[i];
+        }
+        // all good above
+
+        // loop over every event in history, starting at the first one after the pattern
+        // with a buffer of OFFSET events to reserve for predictive data.
+        // e.g. the most recent OFFSET events
+        for(int i=offset*2; i<history.length-offset; i++) {
             double delta = 0;
-            // compare each event of the pattern against the sample data starting at i
-            for(j=0; j<offset; j++) {
-                Datum patternDatum = pattern[j];
-                Datum sampleDatum = JonBot.patternData.get(i+j);
-                double headingDeltaDiff = Math.abs(patternDatum.headingDelta - sampleDatum.headingDelta);
-                double velocityDiff = Math.abs(patternDatum.velocity - sampleDatum.velocity);
-                delta += headingDeltaDiff + velocityDiff;
+            for(int j=0; j<offset; j++) {
+                Datum patternItem = pattern[j];
+                Datum sampleItem = history[i+(offset-j)];
+                delta += Math.abs(sampleItem.headingDelta-patternItem.headingDelta)
+                         + Math.abs(sampleItem.velocity-patternItem.velocity);
             }
             if(delta < minDelta) {
                 minDelta = delta;
@@ -158,8 +169,14 @@ public class JonBot extends AdvancedRobot
             }
         }
 
-        System.out.println("found closest pattern with delta of " + minDelta + " at index: " + minDeltaIndex);
-        return minDeltaIndex;
+        Datum[] prediction = new Datum[offset];
+        System.out.println("pattern match of " + offset + " items started at index " + minDeltaIndex);
+        int predictionStartIndex = minDeltaIndex - offset;
+        for(int i=0, j=predictionStartIndex; i<offset; i++, j--) {
+            prediction[i] = history[j];
+        }
+
+        return prediction;
     }
 
 
@@ -168,13 +185,12 @@ public class JonBot extends AdvancedRobot
      * behavior over the current situation, returning the absolute heading
      * to predicted enemy location such that firing right now with current
      * fire power, the bullet would intersect their future position.
-     * @param patternStartIndex int
      * @return double
      */
-    private double simulatePosition(int patternStartIndex) {
-        // get the 7 data starting at patternStartIndex
-        // Datum[] pattern = JonBot.patternData.
+    private double simulatePosition(Datum[] prediction) {
+        // for(Datum d : prediction) {
 
+        // }
         return 3.0;
     }
 
@@ -208,8 +224,8 @@ public class JonBot extends AdvancedRobot
             double bulletSpeed = Rules.getBulletSpeed(this.firePower);
             int ticksToSimulate = (int)(currentEnemyData.distance/bulletSpeed);
 
-            int patternIndex = this.patternMatch(ticksToSimulate);
-            double simulatedAbsoluteHeading = this.simulatePosition(patternIndex);
+            Datum[] prediction = this.patternMatch(ticksToSimulate);
+            double simulatedAbsoluteHeading = this.simulatePosition(prediction);
         }
 
 	    // Replace the next line with any behavior you would like
