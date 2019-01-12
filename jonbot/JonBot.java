@@ -3,6 +3,8 @@ import robocode.*;
 import robocode.util.Utils;
 
 import java.awt.Color;
+import java.awt.geom.Point2D;
+import java.util.LinkedList;
 
 // API help : https://robocode.sourceforge.io/docs/robocode/robocode/Robot.html
 
@@ -14,21 +16,35 @@ public class JonBot extends AdvancedRobot
     private static final double WALL_BUFFER = 60;
     private static final double WALL_ADJUST_RADS = Math.PI/4;
 
-    // Compas directions (up, down, left, right) in radians
+    // Compass directions (up, down, left, right) in radians
     private static final double UP = 0;
     private static final double UP_FULL = 2 * Math.PI;
     private static final double RIGHT = Math.PI/2;
     private static final double DOWN = Math.PI;
     private static final double LEFT = 1.5 * Math.PI;
 
+    private static LinkedList<Datum> patternData = new LinkedList<>();
 
-    private double firePower;
+    private double firePower = 2.0;
+
+    class Datum {
+        double velocity;
+        double headingDelta;
+        double heading;
+        double distance;
+
+        Datum(double velocity, double heading, double headingDelta, double distance) {
+            this.velocity = velocity;
+            this.heading = heading;
+            this.headingDelta = headingDelta;
+            this.distance = distance;
+        }
+    }
 
     /**
      * run: JonBot's default behavior
      */
     public void run() {
-        this.firePower = 1;
         this.setAdjustGunForRobotTurn(true);
         this.setAdjustRadarForGunTurn(true);
 	    // Initialization of the robot should be put here
@@ -102,13 +118,68 @@ public class JonBot extends AdvancedRobot
 
 
     /**
+     * Takes the most recent set of 7 datum of enemy behavior
+     * and finds the closest set in history, returning the
+     * index in history of the start of the pattern.
+     * @return int
+     */
+    private int patternMatch() {
+        return 0;
+    }
+
+
+    /**
+     * Uses the pattern of historic behavior of the enemy to replay that
+     * behavior over the current situation, returning the absolute heading
+     * to predicted enemy location such that firing right now with current
+     * fire power, the bullet would intersect their future position.
+     * @param patternStartIndex int
+     * @return double
+     */
+    private double simulatePosition(int patternStartIndex) {
+        Datum currentEnemyData = JonBot.patternData.getFirst();
+        double bulletSpeed = Rules.getBulletSpeed(this.firePower);
+        int ticksToSimulate = (int)(currentEnemyData.distance/bulletSpeed);
+
+        // get the 7 data starting at patternStartIndex
+        // Datum[] pattern = JonBot.patternData.
+
+        return 3.0;
+    }
+
+
+    private void recordData(ScannedRobotEvent e) {
+        double heading = e.getHeading();
+        double headingDelta;
+        if(JonBot.patternData.size() > 0) {
+            headingDelta = heading - JonBot.patternData.getFirst().heading;
+        } else {
+            headingDelta = 0;
+        }
+        Datum d = new Datum(e.getVelocity(), heading, headingDelta, e.getDistance());
+        JonBot.patternData.addFirst(d);
+        if(JonBot.patternData.size() > 500) {
+            JonBot.patternData.removeLast();
+        }
+    }
+
+
+    /**
      * onScannedRobot: What to do when you see another robot
      */
     public void onScannedRobot(ScannedRobotEvent e) {
+        this.recordData(e);
+
+        // if we've recorded enough data to pattern match
+        if(JonBot.patternData.size() == 500) {
+            int patternIndex = this.patternMatch();
+            double simulatedAbsoluteHeading = this.simulatePosition(patternIndex);
+        }
+
 	    // Replace the next line with any behavior you would like
         double myAbsoluteBearing = this.getHeadingRadians() + e.getBearingRadians();
 
-        if(e.getDistance() > 5) {
+        if(e.getDistance() > 50) {
             this.setTurnGunRightRadians(Utils.normalRelativeAngle(myAbsoluteBearing - getGunHeadingRadians() +
                     (e.getVelocity() * Math.sin(e.getHeadingRadians() - myAbsoluteBearing) / 13.0)));
         } else {
@@ -122,9 +193,8 @@ public class JonBot extends AdvancedRobot
         double collisionAvoidedHeading = this.adjustHeadingAvoidCollisions(updatedPlayerHeading);
         this.setTurnRightRadians(collisionAvoidedHeading);
 
-        double power = this.calculateFirePower(e.getDistance());
-        out.println("Firing with power: " + power);
-        fire(power);
+        this.firePower = this.calculateFirePower(e.getDistance());
+        fire(this.firePower);
 
         setAhead(30);
     }
