@@ -1,10 +1,12 @@
 package jonbot;
+import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.NotNull;
 import robocode.*;
 import robocode.util.Utils;
 
 import java.awt.Color;
 import java.awt.geom.Point2D;
-import java.util.LinkedList;
+import java.util.ArrayList;
 
 // API help : https://robocode.sourceforge.io/docs/robocode/robocode/Robot.html
 
@@ -23,7 +25,7 @@ public class JonBot extends AdvancedRobot
     private static final double DOWN = Math.PI;
     private static final double LEFT = 1.5 * Math.PI;
 
-    private static LinkedList<Datum> patternData = new LinkedList<>();
+    private static ArrayList<Datum> patternData = new ArrayList<>();
 
     private double firePower = 2.0;
 
@@ -34,9 +36,13 @@ public class JonBot extends AdvancedRobot
         double distance;
 
         Datum(double velocity, double heading, double headingDelta, double distance) {
+            // these are actually used for the pattern match
             this.velocity = velocity;
-            this.heading = heading;
             this.headingDelta = headingDelta;
+
+            // this is only used for determining headingDelta of the next datum
+            this.heading = heading;
+            // this is use for determining how many ticks to simulate
             this.distance = distance;
         }
     }
@@ -52,7 +58,7 @@ public class JonBot extends AdvancedRobot
 	    // After trying out your robot, try uncommenting the import at the top,
 	    // and the next line:
 
-	    this.setColors(Color.red,Color.blue,Color.green); // body,gun,radar
+	    this.setColors(Color.yellow, Color.yellow, Color.yellow); // body,gun,radar
 
 	    // Robot main loop
 	    while(true) {
@@ -60,7 +66,7 @@ public class JonBot extends AdvancedRobot
 	    }
     }
 
-    private double getAdjustedBearingToEnemy(ScannedRobotEvent e, double objectHeading) {
+    private double getAdjustedBearingToEnemy(@NotNull ScannedRobotEvent e, double objectHeading) {
         double enemyBearingToMyLocation = e.getBearingRadians() + this.getHeadingRadians();
         double radarDelta = enemyBearingToMyLocation - objectHeading;
         return Utils.normalRelativeAngle(radarDelta) * 2;
@@ -121,10 +127,39 @@ public class JonBot extends AdvancedRobot
      * Takes the most recent set of 7 datum of enemy behavior
      * and finds the closest set in history, returning the
      * index in history of the start of the pattern.
+     * @param offset The start of history to compare against
      * @return int
      */
-    private int patternMatch() {
-        return 0;
+    private int patternMatch(int offset) {
+        double minDelta = Double.POSITIVE_INFINITY;
+        int minDeltaIndex = 0;
+
+        int i, j;
+        Datum[] pattern = new Datum[offset];
+        // initialize pattern with the most recent bot behavior of the last OFFSET ticks
+        for(i=0; i<offset; i++) {
+            pattern[i] = JonBot.patternData.get(i);
+        }
+
+        // loop over ever past event to see the similarity to the pattern
+        for(i=offset; i<JonBot.patternData.size()-offset; i++) {
+            double delta = 0;
+            // compare each event of the pattern against the sample data starting at i
+            for(j=0; j<offset; j++) {
+                Datum patternDatum = pattern[j];
+                Datum sampleDatum = JonBot.patternData.get(i+j);
+                double headingDeltaDiff = Math.abs(patternDatum.headingDelta - sampleDatum.headingDelta);
+                double velocityDiff = Math.abs(patternDatum.velocity - sampleDatum.velocity);
+                delta += headingDeltaDiff + velocityDiff;
+            }
+            if(delta < minDelta) {
+                minDelta = delta;
+                minDeltaIndex = i;
+            }
+        }
+
+        System.out.println("found closest pattern with delta of " + minDelta + " at index: " + minDeltaIndex);
+        return minDeltaIndex;
     }
 
 
@@ -137,10 +172,6 @@ public class JonBot extends AdvancedRobot
      * @return double
      */
     private double simulatePosition(int patternStartIndex) {
-        Datum currentEnemyData = JonBot.patternData.getFirst();
-        double bulletSpeed = Rules.getBulletSpeed(this.firePower);
-        int ticksToSimulate = (int)(currentEnemyData.distance/bulletSpeed);
-
         // get the 7 data starting at patternStartIndex
         // Datum[] pattern = JonBot.patternData.
 
@@ -148,18 +179,19 @@ public class JonBot extends AdvancedRobot
     }
 
 
-    private void recordData(ScannedRobotEvent e) {
+    private void recordData(@NotNull ScannedRobotEvent e) {
         double heading = e.getHeading();
         double headingDelta;
         if(JonBot.patternData.size() > 0) {
-            headingDelta = heading - JonBot.patternData.getFirst().heading;
+            headingDelta = heading - JonBot.patternData.get(0).heading;
         } else {
             headingDelta = 0;
         }
         Datum d = new Datum(e.getVelocity(), heading, headingDelta, e.getDistance());
-        JonBot.patternData.addFirst(d);
-        if(JonBot.patternData.size() > 500) {
-            JonBot.patternData.removeLast();
+        JonBot.patternData.add(0, d);
+        int num;
+        if((num = JonBot.patternData.size()) > 500) {
+            JonBot.patternData.remove(num-1);
         }
     }
 
@@ -172,7 +204,11 @@ public class JonBot extends AdvancedRobot
 
         // if we've recorded enough data to pattern match
         if(JonBot.patternData.size() == 500) {
-            int patternIndex = this.patternMatch();
+            Datum currentEnemyData = JonBot.patternData.get(0);
+            double bulletSpeed = Rules.getBulletSpeed(this.firePower);
+            int ticksToSimulate = (int)(currentEnemyData.distance/bulletSpeed);
+
+            int patternIndex = this.patternMatch(ticksToSimulate);
             double simulatedAbsoluteHeading = this.simulatePosition(patternIndex);
         }
 
