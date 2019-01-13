@@ -4,19 +4,21 @@ import org.jetbrains.annotations.NotNull;
 import robocode.*;
 import robocode.util.Utils;
 
-import java.awt.Color;
+import java.awt.*;
 import java.awt.geom.Point2D;
 import java.util.ArrayList;
 
 // API help : https://robocode.sourceforge.io/docs/robocode/robocode/Robot.html
 
 /**
- * OneHourChallengeBot - a robot by (your name here)
+ * JonBot - a robot by Jon
  */
 public class JonBot extends AdvancedRobot
 {
     private static final double WALL_BUFFER = 60;
     private static final double WALL_ADJUST_RADS = Math.PI/4;
+    private static final int MAX_HISTORY_ITEMS = 20000;
+    private static final int MIN_HISTORY_ITEMS = 500;
 
     // Compass directions (up, down, left, right) in radians
     private static final double UP = 0;
@@ -28,6 +30,8 @@ public class JonBot extends AdvancedRobot
     private static ArrayList<Datum> patternData = new ArrayList<>();
 
     private double firePower = 2.0;
+    private Point2D.Double lastPredictedLocation;
+    private Point2D.Double[] predictedPath;
 
     class Datum {
         double velocity;
@@ -51,6 +55,8 @@ public class JonBot extends AdvancedRobot
      * run: JonBot's default behavior
      */
     public void run() {
+        this.lastPredictedLocation = null;
+        this.predictedPath = null;
         this.setAdjustGunForRobotTurn(true);
         this.setAdjustRadarForGunTurn(true);
 	    // Initialization of the robot should be put here
@@ -170,7 +176,6 @@ public class JonBot extends AdvancedRobot
         }
 
         Datum[] prediction = new Datum[offset];
-        System.out.println("pattern match of " + offset + " items started at index " + minDeltaIndex);
         int predictionStartIndex = minDeltaIndex - offset;
         for(int i=0, j=predictionStartIndex; i<offset; i++, j--) {
             prediction[i] = history[j];
@@ -185,13 +190,21 @@ public class JonBot extends AdvancedRobot
      * behavior over the current situation, returning the absolute heading
      * to predicted enemy location such that firing right now with current
      * fire power, the bullet would intersect their future position.
-     * @return double
+     * @param position Point2D.Double
+     * @param prediction Datum[]
+     * @return Point2D.Double
      */
-    private double simulatePosition(Datum[] prediction) {
-        // for(Datum d : prediction) {
-
-        // }
-        return 3.0;
+    private Point2D.Double simulatePosition(double heading, Point2D.Double position, Datum[] prediction) {
+        this.predictedPath = new Point2D.Double[prediction.length+1];
+        this.predictedPath[0] = position;
+        int i = 1;
+        for(Datum d : prediction) {
+            heading += d.headingDelta;
+            position = JonBot.project(position, heading, d.velocity);
+            this.predictedPath[i] = position;
+            i++;
+        }
+        return position;
     }
 
 
@@ -206,9 +219,26 @@ public class JonBot extends AdvancedRobot
         Datum d = new Datum(e.getVelocity(), heading, headingDelta, e.getDistance());
         JonBot.patternData.add(0, d);
         int num;
-        if((num = JonBot.patternData.size()) > 500) {
+        if((num = JonBot.patternData.size()) > MAX_HISTORY_ITEMS) {
             JonBot.patternData.remove(num-1);
         }
+    }
+
+
+    private Point2D.Double getEnemyPosition(ScannedRobotEvent e) {
+        double distance = e.getDistance();
+        double myAbsoluteBearing = this.getHeadingRadians() + e.getBearingRadians();
+
+        return JonBot.project(new Point2D.Double(this.getX(), this.getY()), myAbsoluteBearing, distance);
+    }
+
+
+    @Contract(pure=true)
+    private static Point2D.Double project(Point2D.Double sourcePoint, double angle, double length) {
+        return new Point2D.Double(
+                sourcePoint.x + Math.sin(angle) * length,
+                sourcePoint.y + Math.cos(angle) * length
+        );
     }
 
 
@@ -216,27 +246,34 @@ public class JonBot extends AdvancedRobot
      * onScannedRobot: What to do when you see another robot
      */
     public void onScannedRobot(ScannedRobotEvent e) {
+        this.firePower = this.calculateFirePower(e.getDistance());
         this.recordData(e);
 
         // if we've recorded enough data to pattern match
-        if(JonBot.patternData.size() == 500) {
+        if(JonBot.patternData.size() >= MIN_HISTORY_ITEMS) {
             Datum currentEnemyData = JonBot.patternData.get(0);
             double bulletSpeed = Rules.getBulletSpeed(this.firePower);
             int ticksToSimulate = (int)(currentEnemyData.distance/bulletSpeed);
 
             Datum[] prediction = this.patternMatch(ticksToSimulate);
-            double simulatedAbsoluteHeading = this.simulatePosition(prediction);
-        }
+            Point2D.Double enemyPosition = this.getEnemyPosition(e);
 
-	    // Replace the next line with any behavior you would like
-        double myAbsoluteBearing = this.getHeadingRadians() + e.getBearingRadians();
+            Point2D.Double predictedPosition = this.simulatePosition(e.getHeading(), enemyPosition, prediction);
+            this.lastPredictedLocation = predictedPosition;
+            double predictedAbsoluteHeading = Math.atan2(predictedPosition.x-this.getX(), predictedPosition.y-this.getY());
 
-        if(e.getDistance() > 50) {
-            this.setTurnGunRightRadians(Utils.normalRelativeAngle(myAbsoluteBearing - getGunHeadingRadians() +
-                    (e.getVelocity() * Math.sin(e.getHeadingRadians() - myAbsoluteBearing) / 13.0)));
+            this.setTurnGunRightRadians(Utils.normalRelativeAngle(predictedAbsoluteHeading - this.getGunHeadingRadians()));
         } else {
-            this.setTurnGunRightRadians(this.getAdjustedBearingToEnemy(e, this.getGunHeadingRadians()));
+            // just aim at the target if there's not enough data to predict.
+            double myAbsoluteBearing = this.getHeadingRadians() + e.getBearingRadians();
+            if(e.getDistance() > 50) {
+                this.setTurnGunRightRadians(Utils.normalRelativeAngle(myAbsoluteBearing - getGunHeadingRadians() +
+                        (e.getVelocity() * Math.sin(e.getHeadingRadians() - myAbsoluteBearing) / 13.0)));
+            } else {
+                this.setTurnGunRightRadians(this.getAdjustedBearingToEnemy(e, this.getGunHeadingRadians()));
+            }
         }
+
 
 
         this.setTurnRadarRightRadians(this.getAdjustedBearingToEnemy(e, this.getRadarHeadingRadians()));
@@ -245,12 +282,25 @@ public class JonBot extends AdvancedRobot
         double collisionAvoidedHeading = this.adjustHeadingAvoidCollisions(updatedPlayerHeading);
         this.setTurnRightRadians(collisionAvoidedHeading);
 
-        this.firePower = this.calculateFirePower(e.getDistance());
         fire(this.firePower);
 
         setAhead(30);
     }
 
+
+    @Override
+    public void onPaint(Graphics2D g) {
+        g.setColor(Color.red);
+        if(this.lastPredictedLocation != null) {
+            g.drawLine((int)this.getX(), (int)this.getY(), (int)this.lastPredictedLocation.x, (int)this.lastPredictedLocation.y);
+        }
+        if(this.predictedPath != null) {
+            g.setColor(Color.blue);
+            for(Point2D.Double point: this.predictedPath) {
+                g.fillOval((int)point.x, (int)point.y, 6, 6);
+            }
+        }
+    }
 
     private double calculateFirePower(double distanceToEnemy) {
         double maxDistance = Math.sqrt(Math.pow(this.getBattleFieldHeight(), 2) + Math.pow(this.getBattleFieldWidth(), 2));
